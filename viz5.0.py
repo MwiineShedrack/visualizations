@@ -8,8 +8,8 @@ import tempfile
 import re
 
 # App Title
-st.set_page_config(page_title="Mwiine's Data Insights", layout="wide")
-st.title("📊 Ultimate Data Visualization App")
+st.set_page_config(page_title=" AI Insights", layout="wide")
+st.title("📊 AI Insights")
 st.sidebar.header("Upload Your Dataset")
 
 # File Upload
