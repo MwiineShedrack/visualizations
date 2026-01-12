@@ -3,13 +3,11 @@ import pandas as pd
 import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
-from ydata_profiling import ProfileReport
-import tempfile
-import os
 import numpy as np
+import re
 
 # ────────────────────────────────────────────────
-# Page config + improved styling
+# Page config & styling
 # ────────────────────────────────────────────────
 st.set_page_config(
     page_title="AI Insights • Smart Data Explorer",
@@ -37,7 +35,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🧠 AI Insights")
-st.caption("Upload your data → discover hidden patterns & insights automatically")
+st.caption("Upload your data → get smart summaries, insights & visualizations")
 
 # ────────────────────────────────────────────────
 # Sidebar
@@ -88,10 +86,10 @@ if uploaded_file is not None:
 if st.session_state.df is not None:
     df = st.session_state.df
 
-    tab_preview, tab_insights, tab_report, tab_viz = st.tabs([
-        "📋 Data & Preview",
+    tab_preview, tab_insights, tab_summary, tab_viz = st.tabs([
+        "📋 Data Preview",
         "🔍 Key Insights",
-        "📊 Profiling Report",
+        "📊 Data Summary",
         "📈 Visualizations"
     ])
 
@@ -117,13 +115,13 @@ if st.session_state.df is not None:
             })
             st.dataframe(col_info, use_container_width=True)
 
-    # ───── Tab 2: Functional / Time-consuming Insights ─────
+    # ───── Tab 2: Key Insights (time-consuming patterns) ─────
     with tab_insights:
         st.subheader("Automatically Detected Key Insights")
-        st.caption("These are patterns that usually take analysts significant time to uncover manually")
+        st.caption("Patterns that usually take significant manual analysis time")
 
-        # 1. Strongest correlations
-        with st.expander("Strongest Linear Relationships (Correlation > |0.7|)", expanded=True):
+        # Strong correlations
+        with st.expander("Strongest Correlations (|r| > 0.7)", expanded=True):
             numeric = df.select_dtypes(include=np.number)
             if numeric.shape[1] >= 2:
                 corr = numeric.corr().abs()
@@ -131,24 +129,22 @@ if st.session_state.df is not None:
                 strong = corr_triu.stack().reset_index()
                 strong.columns = ['Var1', 'Var2', 'Corr']
                 strong = strong.sort_values('Corr', ascending=False).query('Corr > 0.7')
-
                 if not strong.empty:
-                    st.dataframe(strong.style.format({'Corr': '{:.3f}'}).background_gradient(cmap='YlOrRd', subset=['Corr']))
-                    st.caption("High values may indicate multicollinearity or redundant features.")
+                    st.dataframe(strong.style.format({'Corr': '{:.3f}'})
+                                 .background_gradient(cmap='YlOrRd', subset=['Corr']))
                 else:
                     st.info("No correlations stronger than |0.7| found.")
             else:
                 st.info("Not enough numeric columns.")
 
-        # 2. Outliers summary
+        # Outliers
         with st.expander("Outlier Summary (IQR method)"):
             outliers = {}
-            for col in df.select_dtypes(include=np.number).columns:
+            for col in numeric.columns:
                 Q1 = df[col].quantile(0.25)
                 Q3 = df[col].quantile(0.75)
                 IQR = Q3 - Q1
-                lb, ub = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
-                count = ((df[col] < lb) | (df[col] > ub)).sum()
+                count = ((df[col] < (Q1 - 1.5 * IQR)) | (df[col] > (Q3 + 1.5 * IQR))).sum()
                 if count > 0:
                     outliers[col] = count
             if outliers:
@@ -156,105 +152,108 @@ if st.session_state.df is not None:
                 out_df['% of rows'] = (out_df['Outlier Count'] / len(df) * 100).round(2)
                 st.dataframe(out_df.sort_values('Outlier Count', ascending=False))
             else:
-                st.success("No significant outliers detected (IQR method).")
+                st.success("No significant outliers detected.")
 
-        # 3. Highly skewed columns
-        with st.expander("Highly Skewed Numeric Columns (skew > |2| or < -2)"):
-            skews = df.select_dtypes(include=np.number).skew().dropna()
+        # Skewed columns
+        with st.expander("Highly Skewed Numeric Columns (|skew| > 2)"):
+            skews = numeric.skew().dropna()
             high_skew = skews[abs(skews) > 2].sort_values(key=abs, ascending=False)
             if not high_skew.empty:
-                st.dataframe(high_skew.to_frame(name='Skewness').style.background_gradient(cmap='OrRd', subset=['Skewness']))
-                st.caption("High skew often means log/power transformation or non-parametric methods may help.")
+                st.dataframe(high_skew.to_frame(name='Skewness')
+                             .style.background_gradient(cmap='OrRd', subset=['Skewness']))
             else:
-                st.info("No strongly skewed numeric columns detected.")
+                st.info("No strongly skewed numeric columns.")
 
-        # 4. Categorical imbalance
-        with st.expander("Highly Imbalanced Categories"):
+        # Imbalanced categoricals
+        with st.expander("Highly Imbalanced Categorical Columns"):
             imbal = {}
             for col in df.select_dtypes(include=['object', 'category']).columns:
                 vc = df[col].value_counts(normalize=True)
-                if len(vc) > 1 and vc.iloc[0] > 0.6:  # top category >60%
-                    imbal[col] = f"Top category = {vc.index[0]} ({vc.iloc[0]:.1%})"
+                if len(vc) > 1 and vc.iloc[0] > 0.6:
+                    imbal[col] = f"Top: {vc.index[0]} ({vc.iloc[0]:.1%})"
             if imbal:
                 st.write(pd.Series(imbal).to_frame(name="Imbalance Note"))
             else:
-                st.info("No strongly imbalanced categorical columns (>60% in one category).")
+                st.info("No strongly imbalanced categories (>60% in one value).")
 
-        # 5. Missing value hotspots
-        with st.expander("Columns with High Missingness (>30%)"):
+        # High missing columns
+        with st.expander("Columns with >30% Missing Values"):
             miss = (df.isnull().mean() * 100).round(2)
             high_miss = miss[miss > 30].sort_values(ascending=False)
             if not high_miss.empty:
-                st.dataframe(high_miss.to_frame(name='% Missing').style.background_gradient(cmap='Reds'))
+                st.dataframe(high_miss.to_frame(name='% Missing')
+                             .style.background_gradient(cmap='Reds'))
             else:
-                st.success("No columns with >30% missing values.")
+                st.success("No columns with >30% missing.")
 
-    # ───── Tab 3: Profiling Report ─────
-    with tab_report:
-        st.subheader("Full Automated Profiling Report")
-        st.caption("Detailed EDA — may take 10–90 seconds depending on dataset size")
+    # ───── Tab 3: Data Summary (lightweight replacement) ─────
+    with tab_summary:
+        st.subheader("Quick Data Summary")
 
-        if st.button("Generate & View Report", type="primary"):
-            with st.spinner("Creating pandas-profiling report..."):
-                pr = ProfileReport(df, explorative=True, title="Data Profile Report")
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-                    pr.to_file(tmp.name)
-                    tmp_path = tmp.name
+        colA, colB = st.columns(2)
 
-                with open(tmp_path, "r", encoding="utf-8") as f:
-                    html = f.read()
+        with colA:
+            st.markdown("**Descriptive Statistics**")
+            st.dataframe(df.describe(include="all").T.style.format("{:.2f}"))
 
-                st.components.v1.html(html, height=1000, scrolling=True)
-                os.unlink(tmp_path)
+        with colB:
+            st.markdown("**Missing Values**")
+            miss = df.isnull().sum()
+            miss_pct = (miss / len(df) * 100).round(2)
+            miss_df = pd.DataFrame({"Missing": miss, "% Missing": miss_pct}) \
+                      .sort_values("Missing", ascending=False)
+            st.dataframe(miss_df.style.format({"% Missing": "{:.2f}%"}))
 
-        # Quick summary download
-        missing_total = df.isnull().sum().sum()
-        dup_rows = df.duplicated().sum()
-        quick_txt = f"Missing cells: {missing_total:,}\nDuplicate rows: {dup_rows:,}"
-        st.download_button("📥 Download Quick Summary", quick_txt, "quick_summary.txt", "text/plain")
+        st.markdown("**Column Types & Examples**")
+        overview = pd.DataFrame({
+            "Type": df.dtypes,
+            "Unique Values": df.nunique(),
+            "Example": [df[col].iloc[0] if len(df) > 0 else None for col in df.columns]
+        })
+        st.dataframe(overview)
 
     # ───── Tab 4: Visualizations ─────
     with tab_viz:
-        st.subheader("Comparative Visualizations")
+        st.subheader("Custom Visualizations")
 
-        chart_type = st.selectbox("Chart Type", ["Scatter", "Bar", "Line", "Heatmap"])
+        chart_type = st.selectbox("Chart Type", ["Scatter", "Bar", "Line", "Box", "Histogram", "Heatmap"])
 
-        colA, colB = st.columns(2)
-        with colA:
-            xs = st.multiselect("X variable(s)", df.columns.tolist())
-        with colB:
-            ys = st.multiselect("Y variable(s)", df.columns.tolist())
+        col1, col2 = st.columns(2)
+        with col1:
+            x_var = st.selectbox("X axis", df.columns, key="x_viz")
+        with col2:
+            y_var = st.selectbox("Y axis / Category", df.columns, index=1 if len(df.columns)>1 else 0, key="y_viz")
 
-        if st.button("Generate Charts", type="primary"):
-            if chart_type == "Heatmap":
-                numeric_df = df.select_dtypes(include=np.number)
-                if numeric_df.shape[1] >= 2:
-                    fig, ax = plt.subplots(figsize=(10, 8))
-                    sns.heatmap(numeric_df.corr(), annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
-                    st.pyplot(fig)
-                else:
-                    st.warning("Need at least 2 numeric columns.")
-            else:
-                if not xs or not ys:
-                    st.warning("Select at least one X and one Y variable.")
-                else:
-                    for x in xs:
-                        for y in ys:
-                            if x == y: continue
-                            try:
-                                if chart_type == "Scatter":
-                                    fig = px.scatter(df, x=x, y=y, title=f"{y} vs {x}")
-                                elif chart_type == "Bar":
-                                    fig = px.bar(df, x=x, y=y, title=f"{y} by {x}")
-                                elif chart_type == "Line":
-                                    fig = px.line(df.sort_values(x), x=x, y=y, title=f"{y} over {x}")
-                                st.plotly_chart(fig, use_container_width=True)
-                            except Exception as ex:
-                                st.error(f"Plot failed for {x} vs {y}: {ex}")
+        if st.button("Generate Visualization", type="primary"):
+            try:
+                if chart_type == "Heatmap":
+                    num_df = df.select_dtypes(include=np.number)
+                    if num_df.shape[1] >= 2:
+                        fig, ax = plt.subplots(figsize=(10, 8))
+                        sns.heatmap(num_df.corr(), annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
+                        st.pyplot(fig)
+                    else:
+                        st.warning("Need at least 2 numeric columns.")
+                elif chart_type == "Scatter":
+                    fig = px.scatter(df, x=x_var, y=y_var)
+                    st.plotly_chart(fig, use_container_width=True)
+                elif chart_type == "Bar":
+                    fig = px.bar(df, x=x_var, y=y_var)
+                    st.plotly_chart(fig, use_container_width=True)
+                elif chart_type == "Line":
+                    fig = px.line(df.sort_values(x_var), x=x_var, y=y_var)
+                    st.plotly_chart(fig, use_container_width=True)
+                elif chart_type == "Box":
+                    fig = px.box(df, x=x_var, y=y_var)
+                    st.plotly_chart(fig, use_container_width=True)
+                elif chart_type == "Histogram":
+                    fig = px.histogram(df, x=y_var)
+                    st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Visualization failed: {str(e)}")
 
 else:
-    st.info("Upload a CSV or Excel file to unlock insights and visualizations.", icon="⬆️")
+    st.info("Upload a CSV or Excel file to start exploring your data.", icon="⬆️")
 
 st.markdown("---")
-st.caption("AI Insights • Enhanced Edition • Nairobi, 2026")
-
+st.caption("AI Insights • Lightweight & Cloud-friendly • Nairobi, January 2026")
