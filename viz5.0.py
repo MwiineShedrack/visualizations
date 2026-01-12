@@ -3,32 +3,41 @@ import pandas as pd
 import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
-from ydata_profiling import ProfileReport
-import tempfile
-import os
 import re
 
-st.set_page_config(page_title="AI Insights • Free & Smart", layout="wide", page_icon="🧠📊")
+# ────────────────────────────────────────────────
+st.set_page_config(
+    page_title="AI Insights • Free & Smart",
+    layout="wide",
+    page_icon="🧠📊",
+    initial_sidebar_state="expanded"
+)
 
-st.title("🧠 AI Insights – Talk to Your Data (100% Free, No Keys)")
-st.markdown("Upload CSV/Excel → ask questions in plain English → get answers, tables & charts. Works offline or on Streamlit Cloud.")
+st.title("🧠 AI Insights – Talk to Your Data")
+st.markdown("Upload your CSV or Excel file → ask questions in plain English → get answers, tables & charts. 100% free, no API keys needed.")
 
+# ────────────────────────────────────────────────
 # Sidebar
+# ────────────────────────────────────────────────
 with st.sidebar:
-    st.header("📂 Data")
+    st.header("📂 Data Upload")
     uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 
     st.divider()
-    st.subheader("🛠 Quick Clean")
-    drop_na = st.checkbox("Drop missing values rows")
-    drop_dup = st.checkbox("Remove duplicates")
+    st.subheader("🛠 Quick Cleaning")
+    drop_na = st.checkbox("Drop rows with missing values", value=False)
+    drop_duplicates = st.checkbox("Remove duplicate rows", value=False)
 
-# Session state
+# ────────────────────────────────────────────────
+# Session State
+# ────────────────────────────────────────────────
 if "df" not in st.session_state:
     st.session_state.df = None
     st.session_state.chat_history = []
 
-# Load & clean data
+# ────────────────────────────────────────────────
+# Load and clean data
+# ────────────────────────────────────────────────
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -37,188 +46,240 @@ if uploaded_file is not None:
             df_raw = pd.read_excel(uploaded_file)
 
         df = df_raw.copy()
-        if drop_dup:
+
+        original_shape = df.shape
+        if drop_duplicates:
             df = df.drop_duplicates()
         if drop_na:
             df = df.dropna()
 
         st.session_state.df = df
-        st.sidebar.success(f"Loaded & cleaned: {df.shape[0]:,} rows × {df.shape[1]} cols")
+
+        change_text = ""
+        if df.shape != original_shape:
+            change_text = f" (cleaned from {original_shape[0]:,} × {original_shape[1]} to {df.shape[0]:,} × {df.shape[1]})"
+
+        st.sidebar.success(f"Data loaded{change_text}")
+
     except Exception as e:
-        st.sidebar.error(f"File read error: {str(e)}")
+        st.sidebar.error(f"Error reading file: {str(e)}")
 
 # ────────────────────────────────────────────────
 if st.session_state.df is not None:
     df = st.session_state.df
 
-    tab_chat, tab_viz, tab_report, tab_export = st.tabs(
-        ["💬 Ask Questions", "📈 Quick Visuals", "🔍 Auto EDA Report", "🗄 Export"]
+    tab_chat, tab_viz, tab_summary, tab_export = st.tabs(
+        ["💬 Ask Questions", "📈 Quick Charts", "📊 Data Summary", "⬇️ Export"]
     )
 
-    # ───── Chat Tab ─────
+    # ───── Chat / AI Questions Tab ─────
     with tab_chat:
-        st.subheader("Ask me anything about the data")
-        st.caption("Examples: 'average price by category', 'top 10 highest sales', 'plot revenue over time', 'show rows where age > 30', 'correlation between price and rating'")
+        st.subheader("Ask anything about your data")
+        st.caption(
+            "Try examples:\n"
+            "• average price by category\n"
+            "• total sales by region\n"
+            "• top 10 highest revenue\n"
+            "• plot profit vs cost\n"
+            "• correlation between variables\n"
+            "• show top categories"
+        )
 
-        # Show history
-        for role, msg in st.session_state.chat_history:
+        # Display chat history
+        for role, message in st.session_state.chat_history:
             with st.chat_message(role):
-                st.markdown(msg)
+                st.markdown(message)
 
-        prompt = st.chat_input("Your question...")
+        # Input
+        user_input = st.chat_input("Your question...")
 
-        if prompt:
-            st.session_state.chat_history.append(("user", prompt))
+        if user_input:
+            st.session_state.chat_history.append(("user", user_input))
             with st.chat_message("user"):
-                st.markdown(prompt)
+                st.markdown(user_input)
 
             with st.chat_message("assistant"):
                 with st.spinner("Analyzing..."):
-                    lower_prompt = prompt.lower().strip()
+                    lower_input = user_input.lower().strip()
                     response = ""
-                    extra_content = None
+                    display_df = None
+                    display_chart = None
 
-                    # ───── Rule-based patterns (expand as needed) ─────
-                    # 1. Average / Mean / Avg by group
-                    if re.search(r"(average|mean|avg)\b.*\bby\b", lower_prompt):
-                        match = re.search(r"(?:average|mean|avg)\s*(?:of)?\s*(\w+)\s*by\s*(\w+)", lower_prompt)
+                    # ───── Pattern matching rules ─────
+
+                    # Average / mean / avg by group
+                    if re.search(r"(average|mean|avg)\b.*\bby\b", lower_input):
+                        match = re.search(r"(?:average|mean|avg)\s*(?:of)?\s*([\w\s]+?)\s*by\s*([\w\s]+)", lower_input)
                         if match:
-                            val_col, group_col = match.groups()
+                            val_part, group_part = match.groups()
+                            val_col = val_part.strip()
+                            group_col = group_part.strip()
                             if val_col in df.columns and group_col in df.columns:
                                 try:
                                     result = df.groupby(group_col)[val_col].mean().round(2).sort_values(ascending=False)
-                                    response = f"**Average {val_col} by {group_col}:**"
-                                    extra_content = result.reset_index()
-                                    st.bar_chart(result)
+                                    response = f"**Average {val_col} by {group_col}** (sorted descending)"
+                                    display_df = result.reset_index()
+                                    display_chart = px.bar(display_df, x=group_col, y=val_col, title=response)
                                 except:
-                                    response = "Couldn't compute — check if columns are numeric/categorical."
+                                    response = "Could not calculate — check if the value column is numeric."
+                            else:
+                                response = f"Columns '{val_col}' or '{group_col}' not found in dataset."
+
+                    # Sum / total by group
+                    elif re.search(r"(sum|total)\b.*\bby\b", lower_input):
+                        match = re.search(r"(?:sum|total)\s*(?:of)?\s*([\w\s]+?)\s*by\s*([\w\s]+)", lower_input)
+                        if match:
+                            val_part, group_part = match.groups()
+                            val_col = val_part.strip()
+                            group_col = group_part.strip()
+                            if val_col in df.columns and group_col in df.columns:
+                                result = df.groupby(group_col)[val_col].sum().round(2).sort_values(ascending=False)
+                                response = f"**Total {val_col} by {group_col}** (sorted descending)"
+                                display_df = result.reset_index()
+                                display_chart = px.bar(display_df, x=group_col, y=val_col, title=response)
                             else:
                                 response = f"Columns '{val_col}' or '{group_col}' not found."
 
-                    # 2. Sum / Total by group
-                    elif re.search(r"(sum|total)\b.*\bby\b", lower_prompt):
-                        match = re.search(r"(?:sum|total)\s*(?:of)?\s*(\w+)\s*by\s*(\w+)", lower_prompt)
-                        if match:
-                            val_col, group_col = match.groups()
-                            if val_col in df.columns and group_col in df.columns:
-                                result = df.groupby(group_col)[val_col].sum().round(2).sort_values(ascending=False)
-                                response = f"**Total {val_col} by {group_col}:**"
-                                extra_content = result.reset_index()
-                                st.bar_chart(result)
-                            else:
-                                response = "Columns not found."
-
-                    # 3. Top N highest/lowest
-                    elif "top" in lower_prompt or "highest" in lower_prompt:
+                    # Top N
+                    elif any(w in lower_input for w in ["top", "highest", "largest", "most"]):
                         n = 10
-                        match_n = re.search(r"top\s*(\d+)", lower_prompt)
-                        if match_n:
-                            n = int(match_n.group(1))
+                        m = re.search(r"(?:top|highest|largest)\s*(\d+)", lower_input)
+                        if m:
+                            n = int(m.group(1))
                         num_cols = df.select_dtypes(include="number").columns
-                        if num_cols.any():
-                            sort_col = num_cols[0]  # default to first numeric
-                            df_top = df.nlargest(n, sort_col)
-                            response = f"**Top {n} rows by {sort_col}:**"
-                            extra_content = df_top
+                        if len(num_cols) > 0:
+                            sort_col = num_cols[0]
+                            top_df = df.nlargest(n, sort_col)
+                            response = f"**Top {n} rows by {sort_col}**"
+                            display_df = top_df
                         else:
-                            response = "No numeric columns to sort by."
+                            response = "No numeric columns available to rank."
 
-                    # 4. Plot / Chart / Graph
-                    elif any(w in lower_prompt for w in ["plot", "chart", "graph", "visualize"]):
+                    # Plot / chart / visualize
+                    elif any(w in lower_input for w in ["plot", "chart", "graph", "visualize", "show trend"]):
                         num_cols = df.select_dtypes(include="number").columns
                         if len(num_cols) >= 2:
-                            fig = px.scatter(df, x=num_cols[0], y=num_cols[1],
-                                             title=f"{num_cols[1]} vs {num_cols[0]}")
-                            st.plotly_chart(fig, use_container_width=True)
-                            response = f"Quick scatter plot using first two numeric columns."
+                            x = num_cols[0]
+                            y = num_cols[1] if len(num_cols) > 1 else num_cols[0]
+                            display_chart = px.scatter(df, x=x, y=y, title=f"{y} vs {x}")
+                            response = f"Showing scatter plot of first two numeric columns: **{y} vs {x}**"
                         else:
-                            response = "Need at least two numeric columns for a plot."
+                            response = "Need at least two numeric columns to create a plot."
 
-                    # 5. Correlation
-                    elif "correlation" in lower_prompt or "correlate" in lower_prompt:
-                        corr = df.corr(numeric_only=True)
-                        fig, ax = plt.subplots(figsize=(8, 6))
-                        sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
-                        st.pyplot(fig)
-                        response = "Correlation heatmap (numeric columns only)."
-
-                    # 6. Show rows / filter
-                    elif "show" in lower_prompt or "filter" in lower_prompt or "where" in lower_prompt:
-                        response = "Filter support coming soon — try more specific aggregation questions for now!"
+                    # Correlation
+                    elif "correlation" in lower_input or "correlate" in lower_input:
+                        numeric = df.select_dtypes(include="number")
+                        if numeric.shape[1] >= 2:
+                            corr = numeric.corr()
+                            fig, ax = plt.subplots(figsize=(10, 8))
+                            sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f", ax=ax)
+                            st.pyplot(fig)
+                            response = "**Correlation heatmap** (numeric columns only)"
+                        else:
+                            response = "Not enough numeric columns for correlation analysis."
 
                     # Fallback
-                    else:
+                    if not response:
                         response = (
-                            "Sorry, I didn't understand that question yet.\n\n"
-                            "Try these examples:\n"
+                            "Sorry, I didn't quite understand that question.\n\n"
+                            "**Try asking something like:**\n"
                             "- average salary by department\n"
                             "- total revenue by region\n"
-                            "- top 5 highest profit\n"
-                            "- plot sales over time\n"
-                            "- correlation between variables"
+                            "- top 10 highest sales\n"
+                            "- plot profit vs expenses\n"
+                            "- correlation between price and rating"
                         )
 
                     st.markdown(response)
-                    if extra_content is not None:
-                        if isinstance(extra_content, pd.Series):
-                            st.dataframe(extra_content.reset_index())
-                        else:
-                            st.dataframe(extra_content)
+
+                    if display_df is not None:
+                        st.dataframe(display_df, use_container_width=True)
+
+                    if display_chart is not None:
+                        st.plotly_chart(display_chart, use_container_width=True)
 
                     st.session_state.chat_history.append(("assistant", response))
 
-        if st.button("Clear Chat History"):
+        # Clear button
+        if st.button("Clear conversation"):
             st.session_state.chat_history = []
             st.rerun()
 
-    # ───── Visuals Tab ─────
+    # ───── Quick Charts Tab ─────
     with tab_viz:
-        st.subheader("Quick Visualizations")
+        st.subheader("Custom Visualizations")
+
         col1, col2 = st.columns(2)
         with col1:
-            x_col = st.selectbox("X-axis", df.columns, key="x_viz")
+            x_axis = st.selectbox("X axis", df.columns, key="x_axis")
         with col2:
-            y_col = st.selectbox("Y-axis", df.columns, index=1 if len(df.columns)>1 else 0, key="y_viz")
+            y_axis = st.selectbox("Y axis", df.columns, index=min(1, len(df.columns)-1), key="y_axis")
 
-        viz_type = st.selectbox("Chart Type", ["Scatter", "Line", "Bar", "Box", "Histogram"])
-        if x_col and y_col:
-            if viz_type == "Scatter":
-                fig = px.scatter(df, x=x_col, y=y_col)
-            elif viz_type == "Line":
-                fig = px.line(df.sort_values(x_col), x=x_col, y=y_col)
-            elif viz_type == "Bar":
-                fig = px.bar(df.groupby(x_col)[y_col].mean().reset_index(), x=x_col, y=y_col)
-            elif viz_type == "Box":
-                fig = px.box(df, x=x_col, y=y_col)
-            elif viz_type == "Histogram":
-                fig = px.histogram(df, x=y_col)
+        chart_type = st.selectbox("Chart type", ["Scatter", "Line", "Bar", "Box", "Histogram"])
+
+        if x_axis and y_axis:
+            if chart_type == "Scatter":
+                fig = px.scatter(df, x=x_axis, y=y_axis)
+            elif chart_type == "Line":
+                fig = px.line(df.sort_values(x_axis), x=x_axis, y=y_axis)
+            elif chart_type == "Bar":
+                agg_df = df.groupby(x_axis)[y_axis].mean().reset_index()
+                fig = px.bar(agg_df, x=x_axis, y=y_axis)
+            elif chart_type == "Box":
+                fig = px.box(df, x=x_axis, y=y_axis)
+            elif chart_type == "Histogram":
+                fig = px.histogram(df, x=y_axis)
             st.plotly_chart(fig, use_container_width=True)
 
-    # ───── Report Tab ─────
-    with tab_report:
-        st.subheader("Automatic Data Profile Report")
-        if st.button("Generate Full Report (takes 10–60s)"):
-            with st.spinner("Generating..."):
-                profile = ProfileReport(df, title="Data Profile", explorative=True, minimal=False)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-                    profile.to_file(tmp.name)
-                    with open(tmp.name, "r", encoding="utf-8") as f:
-                        html = f.read()
-                st.components.v1.html(html, height=1000, scrolling=True)
-                os.unlink(tmp.name)
+    # ───── Data Summary Tab ─────
+    with tab_summary:
+        st.subheader("Quick Data Summary")
+
+        colA, colB = st.columns(2)
+
+        with colA:
+            st.markdown("**Basic Information**")
+            st.write(f"Rows: {df.shape[0]:,}")
+            st.write(f"Columns: {df.shape[1]}")
+            st.write("Data types:")
+            st.write(df.dtypes.value_counts().to_frame(name="Count"))
+
+        with colB:
+            st.markdown("**Missing Values**")
+            miss = df.isnull().sum()
+            miss_pct = (miss / len(df) * 100).round(2)
+            miss_table = pd.DataFrame({
+                "Missing": miss,
+                "% Missing": miss_pct
+            }).sort_values("Missing", ascending=False)
+            st.dataframe(miss_table.style.format({"% Missing": "{:.2f}%"}))
+
+        st.subheader("Numeric Columns Overview")
+        st.dataframe(df.describe().T.style.format("{:.2f}"))
+
+        st.subheader("Explore a Column")
+        selected_col = st.selectbox("Select column", df.columns, key="explore_col")
+        if selected_col:
+            if pd.api.types.is_numeric_dtype(df[selected_col]):
+                fig = px.histogram(df, x=selected_col, marginal="box", title=f"Distribution: {selected_col}")
+            else:
+                counts = df[selected_col].value_counts().head(12)
+                fig = px.bar(counts, x=counts.index, y=counts.values, title=f"Top values: {selected_col}")
+            st.plotly_chart(fig, use_container_width=True)
 
     # ───── Export Tab ─────
     with tab_export:
-        st.subheader("Download Cleaned Data")
-        csv = df.to_csv(index=False).encode('utf-8')
+        st.subheader("Download Cleaned Dataset")
+        csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download CSV",
-            data=csv,
-            file_name="cleaned_data.csv",
-            mime="text/csv"
+            data=csv_data,
+            file_name="cleaned_dataset.csv",
+            mime="text/csv",
+            help="Downloads the currently loaded (and cleaned) data"
         )
 
 else:
-    st.info("Upload your CSV or Excel file to start asking questions!", icon="⬆️")
+    st.info("Please upload a CSV or Excel file to begin.", icon="⬆️")
 
-st.caption("Built for free use • No API keys • Deployable on Streamlit Cloud")
+st.caption("Built with ❤️ in Nairobi • 100% free • No external APIs or keys required")
