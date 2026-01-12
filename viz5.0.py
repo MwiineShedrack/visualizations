@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
-from pandas_profiling import ProfileReport
+from ydata_profiling import ProfileReport
 import tempfile
 import os
 import numpy as np
@@ -257,3 +257,4 @@ else:
 
 st.markdown("---")
 st.caption("AI Insights • Enhanced Edition • Nairobi, 2026")
+
