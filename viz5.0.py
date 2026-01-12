@@ -4,7 +4,6 @@ import plotly.express as px
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-import re
 
 # ────────────────────────────────────────────────
 # Page config & styling
@@ -115,7 +114,7 @@ if st.session_state.df is not None:
             })
             st.dataframe(col_info, use_container_width=True)
 
-    # ───── Tab 2: Key Insights (time-consuming patterns) ─────
+    # ───── Tab 2: Key Insights ─────
     with tab_insights:
         st.subheader("Automatically Detected Key Insights")
         st.caption("Patterns that usually take significant manual analysis time")
@@ -186,24 +185,27 @@ if st.session_state.df is not None:
             else:
                 st.success("No columns with >30% missing.")
 
-    # ───── Tab 3: Data Summary (lightweight replacement) ─────
+    # ───── Tab 3: Data Summary (fixed styler) ─────
     with tab_summary:
         st.subheader("Quick Data Summary")
 
-        colA, colB = st.columns(2)
+        # Descriptive statistics - safe formatting only on numeric columns
+        st.markdown("**Descriptive Statistics**")
+        desc = df.describe(include="all").T
+        # Create a formatter dict: apply {:.2f} only to numeric summary rows
+        numeric_rows = desc.index.intersection(['mean', 'std', 'min', '25%', '50%', '75%', 'max'])
+        formatter = {col: "{:.2f}" if row in numeric_rows else "{}" for row, col in desc.index.to_flat_index()}
+        st.dataframe(desc.style.format(formatter))
 
-        with colA:
-            st.markdown("**Descriptive Statistics**")
-            st.dataframe(df.describe(include="all").T.style.format("{:.2f}"))
+        # Missing values
+        st.markdown("**Missing Values**")
+        miss = df.isnull().sum()
+        miss_pct = (miss / len(df) * 100).round(2)
+        miss_df = pd.DataFrame({"Missing": miss, "% Missing": miss_pct}) \
+                  .sort_values("Missing", ascending=False)
+        st.dataframe(miss_df.style.format({"% Missing": "{:.2f}%"}))
 
-        with colB:
-            st.markdown("**Missing Values**")
-            miss = df.isnull().sum()
-            miss_pct = (miss / len(df) * 100).round(2)
-            miss_df = pd.DataFrame({"Missing": miss, "% Missing": miss_pct}) \
-                      .sort_values("Missing", ascending=False)
-            st.dataframe(miss_df.style.format({"% Missing": "{:.2f}%"}))
-
+        # Column types & examples
         st.markdown("**Column Types & Examples**")
         overview = pd.DataFrame({
             "Type": df.dtypes,
