@@ -10,7 +10,6 @@ import numpy as np
 # ────────────────────────────────────────────────
 st.set_page_config(
     page_title="AI Insights • Smart Data Explorer",
-    page_icon="🧠📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -33,7 +32,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🧠 AI Insights")
+st.title("Insights")
 st.caption("Upload your data → get smart summaries, insights & visualizations")
 
 # ────────────────────────────────────────────────
@@ -259,3 +258,4 @@ else:
 
 st.markdown("---")
 st.caption("AI Insights • Lightweight & Cloud-friendly • Nairobi, January 2026")
+
